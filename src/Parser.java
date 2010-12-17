@@ -108,20 +108,52 @@ public class Parser {
 	
 	
 	static String getLocHeaders() {
-		return "lon,lat,age,r,";
+		return "gametime,zone,lon,lat,age,r,dist,";
 	}
 	static long locTime = 0;
 	static double locLatitude = 0;
 	static double locLongitude = 0;
+	// persistent between logs
+	static String lastPlayer = "";
+	static double lastLatitude = 0;
+	static double lastLongitude = 0;
+	static long lastTime = 0;
 	static double locAccuracy = 0;
 	static double refLongitude = 0.067987;
 	static double refLatitude = 51.489499;
+	// last reported
+	static String lastZone = "";
+	static String getTime(int day,double hour,long time,String gameId) {
+		// known game start times?
+		long timeZero = 0;
+		if (gameId.equals("GA522")) {
+			// TODO  14814 10.65
+			timeZero = (long)((14814*24+10.65)*60*60*1000);
+		} else if (gameId.equals("GA523")) {
+			// TODO  12.07
+			timeZero = (long)((14814*24+12.07)*60*60*1000);
+		} else if (gameId.equals("GA525")) {
+			// TODO 13.64
+			timeZero = (long)((14814*24+13.64)*60*60*1000);
+		} else if (gameId.equals("GA526")) {
+			// TODO 15.15
+			timeZero = (long)((14814*24+15.15)*60*60*1000);
+		} 
+		else
+			// day
+			timeZero = (time/(24*60*60*1000))* (24*60*60*1000);
+		
+		return day+","+hour+","+((time-timeZero)/60000.0)+",";
+	}
 	static String getLoc(long time) {
 		LatLng l1 = new LatLng(locLatitude, locLongitude);
 		LatLng l2 = new LatLng(refLatitude, refLongitude);
+		//LatLng l3 = new LatLng(lastLatitude, lastLongitude);
 		// km to m
 		String distanceMetres = locTime==0 ? "NA" : ""+(long)(l1.distance(l2)*1000);
-		return locLongitude+","+locLatitude+","+(locTime==0 ? 0 : (time-locTime)/1000)+","+distanceMetres+",";
+		//String distanceMetresLast = lastLatitude==0 ? "NA" : ""+(long)(l1.distance(l3)*1000);
+		
+		return lastZone+","+locLongitude+","+locLatitude+","+(locTime==0 ? 0 : (time-locTime)/1000)+","+distanceMetres+","+0+",";
 	}
 	
 	static void parseFiles(){
@@ -137,11 +169,11 @@ public class Parser {
 			loginPW = new PrintWriter(new FileWriter("login.csv"));
 			loginPW.println("date,unixtime,event,playerName,clientId,conversationId,status,gameStatus,gameId");
 			gamePW = new PrintWriter(new FileWriter("game.csv"));
-			gamePW.println("day,hour"+getLocHeaders()+",event,clientId,playerId,gameId,year");
+			gamePW.println("day,hour,"+getLocHeaders()+"event,clientId,playerId,gameId,year");
 			messagePW = new PrintWriter(new FileWriter("message.csv"));
-			messagePW.println("day,hour"+getLocHeaders()+",event,playerId,gameId,messageId,type,year,title");
+			messagePW.println("day,hour,"+getLocHeaders()+"event,playerId,gameId,messageId,type,year,title");
 			actionPW = new PrintWriter(new FileWriter("action.csv"));
-			actionPW.println("day,hour"+getLocHeaders()+",action,playerId,gameId");
+			actionPW.println("day,hour,"+getLocHeaders()+"action,playerId,gameId,year");
 		}
 		catch (Exception e) {
 			System.err.println("Error: "+e);
@@ -175,16 +207,26 @@ public class Parser {
 				String clientId = "";
 				String playerId = "";
 				String gameId = "";
+				String lastYear = "";
+
+				long timeZero = 0;
 				int lineNumber = 0;
 				
 				String startAction = null;
 				int startDay = 0;
 				float startHour = 0;
+				long startT =0;
 
 				locTime = 0;
 				locLatitude = 0;
 				locLongitude = 0;
 				locAccuracy = 0;
+				
+				lastZone = "";
+				// immediately prior
+				String prevZone = "";
+				long lastZoneTime = 0;
+				long minZoneTime = 10000; // 10s?!
 				
 				while(true) {
 					lineNumber++;
@@ -274,6 +316,11 @@ public class Parser {
 														String playerId2 = (game.has("ID")) ? game.getString("ID"): "";
 														if (!playerId.equals(playerId2)) {
 															playerId = playerId2;
+															if (!playerId.equals(lastPlayer)) {
+																lastPlayer = playerId;
+																lastLatitude = locLatitude;
+																lastLongitude = locLongitude;
+															}
 														}
 														String name = (game.has("name")) ? game.getString("name"): "";
 														String gameId2 = (game.has("gameID")) ? game.getString("gameID"): "";
@@ -304,6 +351,40 @@ public class Parser {
 							locAccuracy = jo.has("accuracy") ? jo.getDouble("accuracy") : 0;
 							locLatitude = jo.has("latitude") ? jo.getDouble("latitude") : 0;
 							locLongitude = jo.has("longitude") ? jo.getDouble("longitude") : 0;
+							LatLng l1 = new LatLng(locLatitude, locLongitude);
+							LatLng l2 = new LatLng(refLatitude, refLongitude);
+							// km to m
+							String distanceMetres = locTime==0 ? "NA" : ""+(long)(l1.distance(l2)*1000);
+							String movedString = "NA";
+							if (lastTime!=0) {
+								LatLng l3 = new LatLng(lastLatitude, lastLongitude);
+								long distanceMoved = (long)(l1.distance(l3)*1000);
+								if (distanceMoved<10) {
+									// ignore for now
+								}
+								else if (distanceMoved > (time-lastTime)*(3000/1000)) {
+									// more than 3m/s average - glitch?!
+									actionPW.println(getTime(day,hour,time,gameId)+getLoc(time)+"\"move.glitch\",\""+playerId+"\",\""+gameId+"\"");									
+									lastLatitude = locLatitude;
+									lastLongitude = locLongitude;
+									lastTime = time;
+								}
+								else {
+									// move
+									String loc = lastZone+","+locLongitude+","+locLatitude+","+(locTime==0 ? 0 : (time-locTime)/1000)+","+distanceMetres+","+distanceMoved+",";
+									actionPW.println(getTime(day,hour,time,gameId)+loc+"\"move\",\""+playerId+"\",\""+gameId+"\"");
+									lastLatitude = locLatitude;
+									lastLongitude = locLongitude;
+									lastTime = time;
+								}
+							}
+							else {
+								// first move
+								actionPW.println(getTime(day,hour,time,gameId)+getLoc(time)+"\"move\",\""+playerId+"\",\""+gameId+"\"");									
+								lastLatitude = locLatitude;
+								lastLongitude = locLongitude;
+								lastTime = time;								
+							}
 						}
 						else if (event.equals("GameState")){
 							JSONObject jo = parseIt(json);
@@ -318,8 +399,30 @@ public class Parser {
 									String year = msg!=null && msg.has("year") ? msg.getString("year") : "";
 									String title = msg!=null && msg.has("title") ? msg.getString("title") : "";
 									String description = msg!=null && msg.has("description") ? msg.getString("description") : "";
-									messagePW.println(day+","+hour+","+getLoc(time)+"\"newMessage\",\""+playerId+"\",\""+gameId+"\",\""+id+"\",\""+type+"\","+year+",\""+title+"\"");
-								}								
+									messagePW.println(getTime(day,hour,time,gameId)+getLoc(time)+"\"newMessage\",\""+playerId+"\",\""+gameId+"\",\""+id+"\",\""+type+"\","+year+",\""+title+"\"");
+									actionPW.println(getTime(day,hour,time,gameId)+getLoc(time)+"\"newMessage\",\""+playerId+"\",\""+gameId+"\"");
+								} else if(action.equals("updateZone") && jo.has("zoneID")) {
+									String zone = jo.getString("zoneID");
+									if (!zone.equals(lastZone) && time >= lastZoneTime+minZoneTime) {
+										// change
+										lastZone = zone;
+										actionPW.println(getTime(day,hour,time,gameId)+getLoc(time)+"\"changeZone\",\""+playerId+"\",\""+gameId+"\"");
+									}
+									else if (zone.equals(lastZone) && !zone.equals(prevZone) && time<lastZoneTime+minZoneTime) {
+										// changed back quickly - keep waiting
+										lastZoneTime = time;
+									}
+									prevZone = zone;
+								} else if(action.equals("updateYear") && jo.has("year")) {
+									// 1279974791773:GameState:{"action":"updateYear","year":"1958"}
+									String year = jo.getString("year");
+									if (!year.equals(lastYear)) {
+										// change
+										lastYear = year;
+										actionPW.println(getTime(day,hour,time,gameId)+getLoc(time)+"\"changeYear\",\""+playerId+"\",\""+gameId+"\",\""+year+"\"");
+									}
+								}
+
 							}
 						}
 						else if (event.equals("BackgroundThread")){
@@ -369,33 +472,42 @@ public class Parser {
 								if (action.endsWith(".start")) {
 									if (startAction!=null) {
 										// flush
-										actionPW.println(startDay+","+startHour+","+getLoc(time)+"\""+startAction+".started\",\""+playerId+"\",\""+gameId+"\"");
+										actionPW.println(getTime(startDay,startHour,startT,gameId)+getLoc(time)+"\""+startAction+".started\",\""+playerId+"\",\""+gameId+"\"");
 										startAction = null;
 									}
 									startAction = action.substring(0,action.length()-6);
 									startHour = hour;
 									startDay = day;
+									startT = time;
 								}
 								else if (action.endsWith(".ok")) {
 									if (startAction!=null) {
 										// flush
-										actionPW.println(startDay+","+startHour+","+getLoc(time)+"\""+startAction+".done\",\""+playerId+"\",\""+gameId+"\"");
+										actionPW.println(getTime(startDay,startHour,startT,gameId)+getLoc(time)+"\""+startAction+".done\",\""+playerId+"\",\""+gameId+"\"");
 										startAction = null;
 									}									
 								}
 								else if (action.endsWith(".error")) {
 									if (startAction!=null) {
 										// flush
-										actionPW.println(startDay+","+startHour+","+getLoc(time)+"\""+startAction+".failed\",\""+playerId+"\",\""+gameId+"\"");
+										actionPW.println(getTime(startDay,startHour,startT,gameId)+getLoc(time)+"\""+startAction+".failed\",\""+playerId+"\",\""+gameId+"\"");
 										startAction = null;
 									}									
 								}
 								else
-									actionPW.println(day+","+hour+","+getLoc(time)+"\""+action+"\",\""+playerId+"\",\""+gameId+"\"");
+									actionPW.println(getTime(day,hour,time,gameId)+getLoc(time)+"\""+action+"\",\""+playerId+"\",\""+gameId+"\"");
 							}
 						}
 						else if (event.equals("Activity")){
-							parseIt(json);
+							JSONObject jo = parseIt(json);
+							// viewing a message is missing from the GameEvent log...
+							// 1279973223489:Activity:{"method":"onCreate","class":"com.littlebighead.exploding.TimeEventDialog","hashCode":1152522448}
+							if (jo!=null && jo.has("class") && jo.has("method")) {
+								if ("onCreate".equals(jo.getString("method")) && "com.littlebighead.exploding.TimeEventDialog".equals(jo.getString("class"))) {
+									String action = "ViewMessage";
+									actionPW.println(getTime(day,hour,time,gameId)+getLoc(time)+"\""+action+"\",\""+playerId+"\",\""+gameId+"\"");
+								}
+							}
 						}
 						else if (event.equals("LogHeader-v1")){
 							JSONObject jo = parseIt(json);

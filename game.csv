@@ -1,4 +1,4 @@
-day,hourlon,lat,age,r,,event,clientId,playerId,gameId,year
+day,hour,gametime,zone,lon,lat,age,r,dist,event,clientId,playerId,gameId,year
 14811,11.321607,0.0,0.0,0.0,0,gamep,"354957032350129","P542","GA516",1993
 14811,11.328339,0.0,0.0,0.0,0,gamep,"354957032350129","P542","GA516",1994
 14811,11.3361,0.0,0.0,0.0,0,gamep,"354957032350129","P542","GA516",1995
