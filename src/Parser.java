@@ -155,7 +155,32 @@ public class Parser {
 		
 		return lastZone+","+locLongitude+","+locLatitude+","+(locTime==0 ? 0 : (time-locTime)/1000)+","+distanceMetres+","+0+",";
 	}
-	
+	static class Msg {
+		public long time;
+		public int day;
+		public double hour;
+		public String locHeaders;
+		public String playerId;
+		public String gameId;
+		public String messageId;
+		public String type;
+		public String year;
+		public String title;
+		public String description;
+		public long prevTime;
+		public boolean view = false;
+		public long viewTime;
+		public String action = "NA";
+		public long actionTime;
+	}
+	static String getMsgLine(Msg msg, long postTime) {
+		return getTime(msg.day,msg.hour,msg.time,msg.gameId)+msg.locHeaders+"message,"+msg.playerId+","+msg.gameId+","+msg.messageId+","+
+		msg.type+","+msg.year+",\""+msg.title+"\",\""+msg.description+"\","+(msg.prevTime!=0 ? ""+(msg.time-msg.prevTime)/60000.0 : "NA")+","+
+		(postTime!=0 ? ""+(postTime-msg.time)/60000.0 : "NA")+","+(msg.view? "Y":"N")+","+
+		(msg.viewTime!=0 ? ""+(msg.viewTime-msg.time)/60000.0 : "NA")+","+msg.action+","+
+		(msg.actionTime!=0 ? ""+(msg.actionTime-msg.time)/60000.0 : "NA");
+
+	}
 	static void parseFiles(){
 		File rootdir = new File(directory);
 		String dirs[] = rootdir.list();
@@ -171,7 +196,7 @@ public class Parser {
 			gamePW = new PrintWriter(new FileWriter("game.csv"));
 			gamePW.println("day,hour,lon,lat,accuracy,age,event,clientId,playerId,gameId,year");
 			messagePW = new PrintWriter(new FileWriter("message.csv"));
-			messagePW.println("day,hour,"+getLocHeaders()+"event,playerId,gameId,messageId,type,year,title");
+			messagePW.println("day,hour,"+getLocHeaders()+"event,playerId,gameId,messageId,type,year,title,description,preMins,postMins,view,viewMins,action,actionMins");
 			actionPW = new PrintWriter(new FileWriter("action.csv"));
 			actionPW.println("day,hour,"+getLocHeaders()+"action,playerId,gameId,year");
 		}
@@ -227,6 +252,8 @@ public class Parser {
 				String prevZone = "";
 				long lastZoneTime = 0;
 				long minZoneTime = 10000; // 10s?!
+				
+				Msg lastMsg = null;
 				
 				while(true) {
 					lineNumber++;
@@ -396,7 +423,26 @@ public class Parser {
 									String year = msg!=null && msg.has("year") ? msg.getString("year") : "";
 									String title = msg!=null && msg.has("title") ? msg.getString("title") : "";
 									String description = msg!=null && msg.has("description") ? msg.getString("description") : "";
-									messagePW.println(getTime(day,hour,time,gameId)+getLoc(time)+"\"newMessage\",\""+playerId+"\",\""+gameId+"\",\""+id+"\",\""+type+"\","+year+",\""+title+"\"");
+									//messagePW.println(getTime(day,hour,time,gameId)+getLoc(time)+"\"newMessage\",\""+playerId+"\",\""+gameId+"\",\""+id+"\",\""+type+"\","+year+",\""+title+"\"");
+									//			messagePW.println("day,hour,"+getLocHeaders()+"event,playerId,gameId,messageId,type,year,title,preMins,postMins,view,viewMins,action,actionMins");
+
+									long prevTime = (lastMsg!=null ? lastMsg.time : 0);
+									if (lastMsg!=null) 
+										messagePW.println(getMsgLine(lastMsg, time));
+									lastMsg = new Msg();
+									lastMsg.day = day;
+									lastMsg.hour = hour;
+									lastMsg.time = time;
+									lastMsg.messageId = id;
+									lastMsg.playerId = playerId;
+									lastMsg.gameId = gameId;
+									lastMsg.type = type;
+									lastMsg.year = year;
+									lastMsg.title = title;
+									lastMsg.description = description;
+									lastMsg.locHeaders = getLoc(time);
+									lastMsg.prevTime = prevTime;
+									
 									actionPW.println(getTime(day,hour,time,gameId)+getLoc(time)+"\"newMessage\",\""+playerId+"\",\""+gameId+"\",NA");
 								} else if(action.equals("updateZone") && jo.has("zoneID")) {
 									String zone = jo.getString("zoneID");
@@ -467,6 +513,10 @@ public class Parser {
 							if (jo!=null && jo.has("action")) {
 								String action = jo.getString("action");
 								if (action.endsWith(".start")) {
+									if (lastMsg!=null && lastMsg.actionTime==0) {
+										lastMsg.action = action;
+										lastMsg.actionTime = time;
+									}
 									if (startAction!=null) {
 										// flush
 										actionPW.println(getTime(startDay,startHour,startT,gameId)+getLoc(time)+"\""+startAction+".started\",\""+playerId+"\",\""+gameId+"\",NA");
@@ -491,8 +541,13 @@ public class Parser {
 										startAction = null;
 									}									
 								}
-								else
+								else {
+									if (lastMsg!=null && lastMsg.actionTime==0) {
+										lastMsg.action = action;
+										lastMsg.actionTime = time;
+									}
 									actionPW.println(getTime(day,hour,time,gameId)+getLoc(time)+"\""+action+"\",\""+playerId+"\",\""+gameId+"\",NA");
+								}
 							}
 						}
 						else if (event.equals("Activity")){
@@ -503,6 +558,10 @@ public class Parser {
 								if ("onCreate".equals(jo.getString("method")) && "com.littlebighead.exploding.TimeEventDialog".equals(jo.getString("class"))) {
 									String action = "ViewMessage";
 									actionPW.println(getTime(day,hour,time,gameId)+getLoc(time)+"\""+action+"\",\""+playerId+"\",\""+gameId+"\",NA");
+									if (lastMsg!=null && !lastMsg.view) {
+										lastMsg.view = true;
+										lastMsg.viewTime = time;
+									}
 								}
 							}
 						}
@@ -528,6 +587,9 @@ public class Parser {
 						e.printStackTrace(System.err);
 					}
 				}
+				if (lastMsg!=null) 
+					messagePW.println(getMsgLine(lastMsg, 0));
+
 			}
 		}
 		loginPW.close();
