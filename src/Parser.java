@@ -27,7 +27,17 @@ public class Parser {
 	private static final String directory = "clientlogs";
 	private static final String separator = System.getProperty("file.separator");
 	private static final DateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS");
-
+	private static final String FAMILY_NAMES[] = new String [] {"Max", "Lipman", "Solomon", "Velvel"};
+	private static final String WAR_NAMES[] = new String[] { "war", "War" };
+	private static final String LOCAL_NAMES[] = new String[] {
+		"Artillery" , "Beresford" , "Arsenel", "Arsenal", "Thames", "860 cadets", "ferry", "the nursery school", "Searchlight tattoo", "One o’clock gun", "Margate", "Southend", "tram", "Plumstead","Seimens", "Gipsy Moth", "AJS Motorbikes" ,
+		"Woolwich Power Station", "Old Station Museum", "Woolwich pubs", "Belmarsh" , "Coronet cinema", "Woolwich DLR", "Woolwich Arsenel DLR", "Woolwich Building Society", "Firepower museum", "Children of men" , "London City Airport", "MC Afrikan boy" , "Tramshed",
+		"Some communities", "improving", "better than average", "the common", "local communities" };
+	private static final String LINKED_NAMES[] = new String [] {"Biafran", "Korea"};
+	private static final String SITE_NAMES[] = new String [] {"Woolwich"};
+	private static final String[] REGIONAL_NAMES = new String[] {"Battle of Britain", "Blitz", "bombs", "snow", "Pea soupers", "London", "Spanish influenza", "Spanish Flu", "general strike", "great depression", "Empire day", "VE", "Army", "polio", "ration", "King", "Queen" };
+	private static final String [] GENERAL_NAMES = new String [] {"cinema", "obesity"};
+	
 	public static void main(String argv[]){
 		parseFiles();
 	}
@@ -181,6 +191,31 @@ public class Parser {
 		(msg.actionTime!=0 ? ""+(msg.actionTime-msg.time)/60000.0 : "NA");
 
 	}
+	static class MsgView {
+		public long time;
+		public int day;
+		public double hour;
+		public String locHeaders;
+		public String playerId;
+		public String gameId;
+		public String messageId;
+		public String type;
+		public String year;
+		public String title;
+		public String description;
+		public int titleLength;
+		public int descriptionLength;
+		public String content;
+		public boolean resumed;
+		public long resumeTime;
+		public long viewDuration;
+	}
+	static String getMsgLine(MsgView msg) {
+		return getTime(msg.day,msg.hour,msg.time,msg.gameId)+msg.locHeaders+"message,"+msg.playerId+","+msg.gameId+","+msg.messageId+","+
+		msg.type+","+msg.year+",\""+msg.title+"\",\""+msg.description+"\","+msg.titleLength+","+msg.descriptionLength+","+
+		msg.content+","+(msg.viewDuration / 60000.0);
+
+	}
 	static void parseFiles(){
 		File rootdir = new File(directory);
 		String dirs[] = rootdir.list();
@@ -189,6 +224,7 @@ public class Parser {
 		PrintWriter loginPW = null;
 		PrintWriter gamePW = null;
 		PrintWriter messagePW = null;
+		PrintWriter viewPW = null;
 		PrintWriter actionPW = null;
 		try {
 			loginPW = new PrintWriter(new FileWriter("login.csv"));
@@ -199,6 +235,8 @@ public class Parser {
 			messagePW.println("day,hour,"+getLocHeaders()+"event,playerId,gameId,messageId,type,year,title,description,preMins,postMins,view,viewMins,action,actionMins");
 			actionPW = new PrintWriter(new FileWriter("action.csv"));
 			actionPW.println("day,hour,"+getLocHeaders()+"action,playerId,gameId,year");
+			viewPW = new PrintWriter(new FileWriter("view.csv"));
+			viewPW.println("day,hour,"+getLocHeaders()+"event,playerId,gameId,messageId,type,year,title,description,titleLength,descriptionLength,content,viewMins");
 		}
 		catch (Exception e) {
 			System.err.println("Error: "+e);
@@ -254,6 +292,7 @@ public class Parser {
 				long minZoneTime = 10000; // 10s?!
 				
 				Msg lastMsg = null;
+				MsgView lastMsgView = null;
 				
 				while(true) {
 					lineNumber++;
@@ -562,6 +601,65 @@ public class Parser {
 										lastMsg.view = true;
 										lastMsg.viewTime = time;
 									}
+									if (lastMsgView!=null) {
+										viewPW.println(getMsgLine(lastMsgView));
+									}
+									if (lastMsg!=null) {
+										lastMsgView = new MsgView();
+										lastMsgView.day = day;
+										lastMsgView.hour = hour;
+										lastMsgView.time = time;
+										lastMsgView.messageId = lastMsg.messageId;
+										lastMsgView.playerId = lastMsg.playerId;
+										lastMsgView.gameId = lastMsg.gameId;
+										lastMsgView.type = lastMsg.type;
+										lastMsgView.year = lastMsg.year;
+										lastMsgView.title = lastMsg.title;
+										lastMsgView.description = lastMsg.description;
+										lastMsgView.locHeaders = getLoc(time);
+										lastMsgView.titleLength = (lastMsg.title!=null ? lastMsg.title.length() : 0);
+										lastMsgView.descriptionLength= (lastMsg.description!=null ? lastMsg.description.length() : 0);										
+										
+										// guess content
+										String content = "unknown";
+										// TODO
+										if (lastMsgView.title.equals("Welcome to Woolwich")) 
+											content = "welcome";
+										else if (contains(lastMsgView, FAMILY_NAMES)) 
+												content = "family";
+										else if (contains(lastMsgView, LINKED_NAMES)) 
+											content = "linked";
+										else if (contains(lastMsgView, LOCAL_NAMES)) 
+											content = "local";
+										else if (contains(lastMsgView, REGIONAL_NAMES)) 
+											content = "regional";
+										else if (contains(lastMsgView, SITE_NAMES)) 
+											content = "site";
+										else if (contains(lastMsgView, WAR_NAMES)) 
+											content = "war";
+										else if (contains(lastMsgView, GENERAL_NAMES)) 
+											content = "general";
+										
+										
+										lastMsgView.content = content;
+									}
+								} else if ("onResume".equals(jo.getString("method")) && "com.littlebighead.exploding.TimeEventDialog".equals(jo.getString("class"))) {
+									if (lastMsgView!=null)
+									{
+										if (lastMsgView.resumed) 
+											System.err.println("View onResume when resumed already");
+										lastMsgView.resumed = true;
+										lastMsgView.resumeTime = time;
+									}
+								} else if ("onPause".equals(jo.getString("method")) && "com.littlebighead.exploding.TimeEventDialog".equals(jo.getString("class"))) {
+									if (lastMsgView!=null) {
+										if (lastMsgView.resumed) {
+											lastMsgView.resumed = false;
+											lastMsgView.viewDuration += time-lastMsgView.resumeTime;
+										}
+										else
+											System.err.println("View onPause when not resumed");
+									}
 								}
 							}
 						}
@@ -589,6 +687,9 @@ public class Parser {
 				}
 				if (lastMsg!=null) 
 					messagePW.println(getMsgLine(lastMsg, 0));
+				if (lastMsgView!=null) {
+					viewPW.println(getMsgLine(lastMsgView));
+				}
 
 			}
 		}
@@ -596,11 +697,29 @@ public class Parser {
 		gamePW.close();
 		messagePW.close();
 		actionPW.close();
+		viewPW.close();
 		System.out.println("Events:");
 		for (String event : eventCount.keySet()) {
 			System.out.println(event+":\t"+eventCount.get(event));
 		}
 	}
+
+	/**
+	 * @param title
+	 * @param familyNames
+	 * @return
+	 */
+	private static boolean contains(String title, String[] familyNames) {
+		title = title.toLowerCase();
+		for (int i=0; i<familyNames.length; i++)
+			if (title.contains(familyNames[i].toLowerCase()))
+				return true;
+		return false;
+	}
+	private static boolean contains(MsgView msgView, String[] familyNames) {
+		return contains(msgView.title, familyNames) || contains(msgView.description, familyNames);
+	}
+
 
 	private static JSONObject parseMsg(String reply) {
 		// try to convert/parse the dump format as JSON
